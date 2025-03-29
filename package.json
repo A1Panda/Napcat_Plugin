@@ -1,0 +1,21 @@
+{
+  "name": "yunzai-napcat-plugin",
+  "version": "1.0.0",
+  "description": "YunzaiBot的Napcat管理插件",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "yunzai",
+    "bot",
+    "napcat",
+    "ssh"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "node-ssh": "^13.1.0"
+  }
+} 

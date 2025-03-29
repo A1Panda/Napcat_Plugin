@@ -1,0 +1,5 @@
+config/
+node_modules/
+data/userdata/
+.DS_Store
+.env
