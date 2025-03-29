@@ -211,7 +211,7 @@ export class NapcatManager extends plugin {
     return true
   }
 
-  // 查看 napcat 日志（使用实时日志流）
+  // 查看 napcat 日志（缓存 60 秒后以聊天记录形式发送）
   async napcatLog(e) {
     // 检查权限
     if (!await this.checkMaster(e)) return true
@@ -223,76 +223,62 @@ export class NapcatManager extends plugin {
     }
     
     const qq = match[1]
-    await e.reply(`正在连接到 QQ ${qq} 的 napcat 日志终端，将持续显示 60 秒...`)
+    await e.reply(`正在连接到 QQ ${qq} 的 napcat 日志，将缓存 60 秒后发送完整日志...`)
     
     try {
       // 设置总超时时间为 60 秒
       const totalTimeoutMs = 60000
       // 记录开始时间
       const startTime = Date.now()
-      // 是否已经发送过日志
-      let hasSentLog = false
-      // 上次发送消息的时间
-      let lastSendTime = 0
-      // 日志缓冲区
-      let logBuffer = []
+      // 完整日志缓存
+      let fullLogBuffer = []
       // 是否已经停止日志流
       let stopped = false
-      
-      // 创建一个函数来发送缓冲区中的日志
-      const sendBufferedLogs = async () => {
-        if (logBuffer.length === 0) return
-        
-        const now = Date.now()
-        const elapsedTime = Math.floor((now - startTime) / 1000)
-        const remainingTime = Math.floor((totalTimeoutMs - (now - startTime)) / 1000)
-        
-        await e.reply(`QQ ${qq} 的实时日志终端 (已运行 ${elapsedTime} 秒，剩余 ${remainingTime} 秒):\n${logBuffer.join('')}`)
-        
-        // 清空缓冲区并更新发送时间
-        logBuffer = []
-        lastSendTime = now
-        hasSentLog = true
-      }
+      // 是否收到过日志
+      let hasReceivedLog = false
       
       // 创建一个函数来清理资源并结束连接
       const cleanup = async () => {
         if (stopped) return
         stopped = true
         
-        // 清除定时器
-        clearInterval(bufferTimer)
-        clearTimeout(timeoutTimer)
-        
         // 停止日志流
         sshClient.stopLogStream()
-        
-        // 发送剩余的日志
-        if (logBuffer.length > 0) {
-          await sendBufferedLogs()
-        }
         
         // 断开 SSH 连接
         await sshClient.disconnect()
         console.log(`已断开 QQ ${qq} 的日志 SSH 连接`)
       }
       
-      // 设置定时发送日志的定时器
-      const bufferTimer = setInterval(async () => {
-        if (logBuffer.length > 0 && Date.now() - lastSendTime > 3000) {
-          await sendBufferedLogs()
-        }
-      }, 1000)
-      
       // 设置总超时定时器
       const timeoutTimer = setTimeout(async () => {
         if (!stopped) {
           await cleanup()
           
-          // 发送日志结束通知
-          if (hasSentLog) {
-            await e.reply(`QQ ${qq} 的实时日志终端已关闭，总时长 ${totalTimeoutMs/1000} 秒`)
-          } else {
+          // 发送完整日志
+          if (fullLogBuffer.length > 0) {
+            hasReceivedLog = true
+            
+            // 处理日志，将其格式化为聊天记录形式
+            const formattedLogs = this.formatLogsAsChatHistory(fullLogBuffer.join(''), qq)
+            
+            // 发送格式化后的日志
+            await e.reply(`QQ ${qq} 的 napcat 日志（收集时长 ${totalTimeoutMs/1000} 秒）：`)
+            
+            // 分段发送，避免消息过长
+            const maxLength = 1500 // 每段最大长度
+            for (let i = 0; i < formattedLogs.length; i += maxLength) {
+              const segment = formattedLogs.substring(i, i + maxLength)
+              if (segment.trim()) {
+                await e.reply(segment)
+                // 添加短暂延迟，避免消息发送过快
+                await new Promise(resolve => setTimeout(resolve, 300))
+              }
+            }
+          }
+          
+          // 如果没有收到日志，检查 napcat 状态
+          if (!hasReceivedLog) {
             await e.reply(`QQ ${qq} 在 ${totalTimeoutMs/1000} 秒内没有产生日志，可能该 QQ 的 napcat 未运行`)
             
             // 重新连接以检查状态
@@ -318,24 +304,43 @@ export class NapcatManager extends plugin {
         qq,
         // 日志数据回调
         (logData) => {
-          // 将新的日志数据添加到缓冲区
-          logBuffer.push(logData)
-          
-          // 如果缓冲区太大，立即发送
-          if (logBuffer.join('').length > 1000) {
-            sendBufferedLogs()
-          }
+          // 将新的日志数据添加到完整缓冲区
+          fullLogBuffer.push(logData)
+          hasReceivedLog = true
         },
         // 错误回调
         async (errorData) => {
           await e.reply(`日志获取出错: ${errorData}`)
           await cleanup()
+          clearTimeout(timeoutTimer)
         },
         // 结束回调
         async (code) => {
           if (!stopped) {
             await cleanup()
-            await e.reply(`QQ ${qq} 的日志流已结束，退出码: ${code}`)
+            clearTimeout(timeoutTimer)
+            
+            // 如果日志流提前结束，发送已收集的日志
+            if (fullLogBuffer.length > 0) {
+              // 处理日志，将其格式化为聊天记录形式
+              const formattedLogs = this.formatLogsAsChatHistory(fullLogBuffer.join(''), qq)
+              
+              // 发送格式化后的日志
+              await e.reply(`QQ ${qq} 的 napcat 日志（日志流已结束，退出码: ${code}）：`)
+              
+              // 分段发送，避免消息过长
+              const maxLength = 1500 // 每段最大长度
+              for (let i = 0; i < formattedLogs.length; i += maxLength) {
+                const segment = formattedLogs.substring(i, i + maxLength)
+                if (segment.trim()) {
+                  await e.reply(segment)
+                  // 添加短暂延迟，避免消息发送过快
+                  await new Promise(resolve => setTimeout(resolve, 300))
+                }
+              }
+            } else {
+              await e.reply(`QQ ${qq} 的日志流已结束（退出码: ${code}），但未收集到任何日志`)
+            }
           }
         }
       )
@@ -347,8 +352,30 @@ export class NapcatManager extends plugin {
         cancelCmd: '#取消日志',
         callback: async () => {
           if (!stopped) {
+            clearTimeout(timeoutTimer)
             await cleanup()
-            await e.reply(`已手动取消 QQ ${qq} 的日志查看`)
+            
+            // 如果用户取消，发送已收集的日志
+            if (fullLogBuffer.length > 0) {
+              // 处理日志，将其格式化为聊天记录形式
+              const formattedLogs = this.formatLogsAsChatHistory(fullLogBuffer.join(''), qq)
+              
+              // 发送格式化后的日志
+              await e.reply(`QQ ${qq} 的 napcat 日志（手动取消，已收集 ${Math.floor((Date.now() - startTime) / 1000)} 秒）：`)
+              
+              // 分段发送，避免消息过长
+              const maxLength = 1500 // 每段最大长度
+              for (let i = 0; i < formattedLogs.length; i += maxLength) {
+                const segment = formattedLogs.substring(i, i + maxLength)
+                if (segment.trim()) {
+                  await e.reply(segment)
+                  // 添加短暂延迟，避免消息发送过快
+                  await new Promise(resolve => setTimeout(resolve, 300))
+                }
+              }
+            } else {
+              await e.reply(`已手动取消 QQ ${qq} 的日志查看，未收集到任何日志`)
+            }
           }
         }
       })
@@ -367,6 +394,43 @@ export class NapcatManager extends plugin {
     }
     
     return true
+  }
+
+  // 将日志格式化为聊天记录形式
+  formatLogsAsChatHistory(logText, qq) {
+    // 分割日志行
+    const lines = logText.split('\n')
+    
+    // 过滤空行并格式化
+    const formattedLines = lines
+      .filter(line => line.trim())
+      .map(line => {
+        // 尝试提取时间戳
+        const timestampMatch = line.match(/^\[([\d\-\s:]+)\]/)
+        if (timestampMatch) {
+          const timestamp = timestampMatch[1]
+          const content = line.substring(timestampMatch[0].length).trim()
+          return `[${timestamp}] ${content}`
+        }
+        return line
+      })
+    
+    // 如果日志行太多，只保留最后 300 行
+    const maxLines = 300
+    const truncatedLines = formattedLines.length > maxLines 
+      ? formattedLines.slice(-maxLines) 
+      : formattedLines
+    
+    // 如果进行了截断，添加提示信息
+    if (formattedLines.length > maxLines) {
+      truncatedLines.unshift(`[系统提示] 日志过长，已截取最后 ${maxLines} 行（总共 ${formattedLines.length} 行）`)
+    }
+    
+    // 添加日志头部信息
+    truncatedLines.unshift(`===== QQ ${qq} 的 Napcat 日志 =====`)
+    
+    // 合并为文本
+    return truncatedLines.join('\n')
   }
 
   // 更新 napcat
