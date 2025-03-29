@@ -174,7 +174,7 @@ export class NapcatTest extends plugin {
     return true
   }
 
-  // 查看 napcat 日志
+  // 查看 napcat 日志（使用实时日志流）
   async napcatLog(e) {
     const match = e.msg.match(/^#napcat日志\s+(\d+)$/)
     if (!match || !match[1]) {
@@ -183,40 +183,145 @@ export class NapcatTest extends plugin {
     }
     
     const qq = match[1]
-    e.reply(`正在获取 QQ ${qq} 的 napcat 日志，将显示最近几秒的日志...`)
+    await e.reply(`正在连接到 QQ ${qq} 的 napcat 日志终端，将持续显示 60 秒...`)
     
     try {
-      // 获取部分实时日志，只运行 5 秒
-      const result = await sshClient.getPartialLog(qq, 5000)
+      // 设置总超时时间为 60 秒
+      const totalTimeoutMs = 60000
+      // 记录开始时间
+      const startTime = Date.now()
+      // 是否已经发送过日志
+      let hasSentLog = false
+      // 上次发送消息的时间
+      let lastSendTime = 0
+      // 日志缓冲区
+      let logBuffer = []
+      // 是否已经停止日志流
+      let stopped = false
       
-      if (result.success) {
-        if (result.stdout.trim() && result.stdout.trim() !== '命令已取消，以下是部分日志：') {
-          // 如果日志太长，只显示最后几行
-          const logs = result.stdout.split('\n')
-          const lastLogs = logs.length > 30 ? logs.slice(-30).join('\n') : result.stdout
-          e.reply(`QQ ${qq} 的 napcat 日志 (最近几秒的日志，最多显示30行):\n${lastLogs}`)
-        } else {
-          e.reply(`QQ ${qq} 的 napcat 在最近几秒内没有产生日志，可能该 QQ 的 napcat 未运行`)
+      // 创建一个函数来发送缓冲区中的日志
+      const sendBufferedLogs = async () => {
+        if (logBuffer.length === 0) return
+        
+        const now = Date.now()
+        const elapsedTime = Math.floor((now - startTime) / 1000)
+        const remainingTime = Math.floor((totalTimeoutMs - (now - startTime)) / 1000)
+        
+        await e.reply(`QQ ${qq} 的实时日志终端 (已运行 ${elapsedTime} 秒，剩余 ${remainingTime} 秒):\n${logBuffer.join('')}`)
+        
+        // 清空缓冲区并更新发送时间
+        logBuffer = []
+        lastSendTime = now
+        hasSentLog = true
+      }
+      
+      // 创建一个函数来清理资源并结束连接
+      const cleanup = async () => {
+        if (stopped) return
+        stopped = true
+        
+        // 清除定时器
+        clearInterval(bufferTimer)
+        clearTimeout(timeoutTimer)
+        
+        // 停止日志流
+        sshClient.stopLogStream()
+        
+        // 发送剩余的日志
+        if (logBuffer.length > 0) {
+          await sendBufferedLogs()
+        }
+        
+        // 断开 SSH 连接
+        await sshClient.disconnect()
+        console.log(`已断开 QQ ${qq} 的日志 SSH 连接`)
+      }
+      
+      // 设置定时发送日志的定时器
+      const bufferTimer = setInterval(async () => {
+        if (logBuffer.length > 0 && Date.now() - lastSendTime > 3000) {
+          await sendBufferedLogs()
+        }
+      }, 1000)
+      
+      // 设置总超时定时器
+      const timeoutTimer = setTimeout(async () => {
+        if (!stopped) {
+          await cleanup()
           
-          // 尝试检查 napcat 状态
-          const statusResult = await sshClient.napcatStatus(qq)
-          if (statusResult.success) {
-            e.reply(`QQ ${qq} 的 napcat 状态:\n${statusResult.stdout}`)
+          // 发送日志结束通知
+          if (hasSentLog) {
+            await e.reply(`QQ ${qq} 的实时日志终端已关闭，总时长 ${totalTimeoutMs/1000} 秒`)
+          } else {
+            await e.reply(`QQ ${qq} 在 ${totalTimeoutMs/1000} 秒内没有产生日志，可能该 QQ 的 napcat 未运行`)
+            
+            // 重新连接以检查状态
+            await sshClient.connect()
+            
+            // 尝试检查 napcat 状态
+            const statusResult = await sshClient.napcatStatus(qq)
+            if (statusResult.success) {
+              await e.reply(`QQ ${qq} 的 napcat 状态:\n${statusResult.stdout}`)
+            }
+            
+            // 再次断开连接
+            await sshClient.disconnect()
           }
         }
-      } else {
-        e.reply(`获取日志失败: ${result.stderr || result.message}`)
-        
-        // 尝试检查 napcat 是否运行
-        e.reply('正在检查该 QQ 的 napcat 是否运行...')
-        const statusResult = await sshClient.napcatStatus(qq)
-        if (statusResult.success) {
-          e.reply(`QQ ${qq} 的 napcat 状态:\n${statusResult.stdout}`)
-        } else {
-          e.reply('无法获取 napcat 状态，请确认 QQ 号是否正确')
+      }, totalTimeoutMs)
+      
+      // 确保连接已建立
+      await sshClient.connect()
+      
+      // 启动日志流
+      sshClient.getLogStream(
+        qq,
+        // 日志数据回调
+        (logData) => {
+          // 将新的日志数据添加到缓冲区
+          logBuffer.push(logData)
+          
+          // 如果缓冲区太大，立即发送
+          if (logBuffer.join('').length > 1000) {
+            sendBufferedLogs()
+          }
+        },
+        // 错误回调
+        async (errorData) => {
+          await e.reply(`日志获取出错: ${errorData}`)
+          await cleanup()
+        },
+        // 结束回调
+        async (code) => {
+          if (!stopped) {
+            await cleanup()
+            await e.reply(`QQ ${qq} 的日志流已结束，退出码: ${code}`)
+          }
         }
-      }
+      )
+      
+      // 注册用户取消命令
+      this.setContext('napcatLog', {
+        qq,
+        timeout: 60000, // 60秒后自动取消
+        cancelCmd: '#取消日志',
+        callback: async () => {
+          if (!stopped) {
+            await cleanup()
+            await e.reply(`已手动取消 QQ ${qq} 的日志查看`)
+          }
+        }
+      })
+      
     } catch (error) {
+      // 确保出错时也断开连接
+      try {
+        await sshClient.stopLogStream()
+        await sshClient.disconnect()
+      } catch (disconnectError) {
+        console.error(`断开连接出错: ${disconnectError.message}`)
+      }
+      
       e.reply(`执行命令出错: ${error.message}`)
       console.error(error)
     }

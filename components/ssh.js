@@ -1,46 +1,53 @@
-import { NodeSSH } from 'node-ssh'
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { Client } from 'ssh2'
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
 
+// 获取当前文件的目录
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const configPath = path.join(__dirname, '../config/ssh_config.json')
+// 获取插件根目录
+const pluginRoot = path.resolve(__dirname, '..')
 
 class SSHClient {
   constructor() {
-    this.ssh = new NodeSSH()
-    this.config = this.loadConfig()
-    this.connected = false
+    this.client = null
+    this.config = null
+    this.isConnected = false
+    this.connectionInfo = {}
+    
+    // 加载配置
+    this.loadConfig()
   }
-
+  
+  // 加载 SSH 配置
   loadConfig() {
     try {
+      const configPath = path.join(pluginRoot, 'config/ssh_config.json')
       if (fs.existsSync(configPath)) {
-        const configData = fs.readFileSync(configPath, 'utf8')
-        return JSON.parse(configData)
+        const configContent = fs.readFileSync(configPath, 'utf8')
+        this.config = JSON.parse(configContent)
+        
+        // 如果配置了私钥路径，读取私钥内容
+        if (this.config.privateKeyPath) {
+          const keyPath = path.resolve(pluginRoot, this.config.privateKeyPath)
+          if (fs.existsSync(keyPath)) {
+            this.config.privateKey = fs.readFileSync(keyPath, 'utf8')
+          } else {
+            console.error(`私钥文件不存在: ${keyPath}`)
+          }
+        }
       } else {
-        // 创建默认配置
-        const defaultConfig = {
+        console.error('SSH 配置文件不存在，请创建 config/ssh_config.json')
+        this.config = {
           host: 'localhost',
           port: 22,
-          username: 'user',
-          password: '',
-          // 或者使用私钥
-          // privateKey: '/path/to/private/key'
+          username: 'root',
+          password: ''
         }
-        
-        // 确保目录存在
-        const configDir = path.dirname(configPath)
-        if (!fs.existsSync(configDir)) {
-          fs.mkdirSync(configDir, { recursive: true })
-        }
-        
-        fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2))
-        return defaultConfig
       }
     } catch (error) {
       console.error('加载 SSH 配置失败:', error)
-      return {
+      this.config = {
         host: 'localhost',
         port: 22,
         username: 'root',
@@ -48,168 +55,301 @@ class SSHClient {
       }
     }
   }
-
+  
+  // 获取连接信息
+  getConnectionInfo() {
+    return {
+      host: this.config.host,
+      port: this.config.port,
+      username: this.config.username,
+      connected: this.isConnected,
+      authMethod: this.config.privateKey ? 'privateKey' : 'password'
+    }
+  }
+  
+  // 连接到 SSH 服务器
   async connect() {
-    if (this.connected) return true
-    
-    try {
-      await this.ssh.connect(this.config)
-      this.connected = true
-      console.log('SSH 连接成功')
+    if (this.isConnected) {
       return true
-    } catch (error) {
-      console.error('SSH 连接失败:', error)
-      return false
     }
-  }
-
-  async disconnect() {
-    if (!this.connected) return
     
-    this.ssh.dispose()
-    this.connected = false
-    console.log('SSH 连接已断开')
-  }
-
-  async executeCommand(command, timeout = 30000) {
-    if (!this.connected) {
-      const connected = await this.connect()
-      if (!connected) {
-        return { success: false, message: 'SSH 连接失败' }
-      }
-    }
-
-    try {
-      // 创建一个带超时的 Promise
-      const commandPromise = this.ssh.execCommand(command)
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('命令执行超时')), timeout)
-      )
+    return new Promise((resolve) => {
+      this.client = new Client()
       
-      // 使用 Promise.race 实现超时控制
-      const result = await Promise.race([commandPromise, timeoutPromise])
+      this.client.on('ready', () => {
+        this.isConnected = true
+        console.log('SSH 连接成功')
+        resolve(true)
+      })
       
-      return {
-        success: result.code === 0,
-        stdout: result.stdout,
-        stderr: result.stderr,
-        code: result.code
-      }
-    } catch (error) {
-      console.error('执行命令失败:', error)
-      return { success: false, message: `执行命令失败: ${error.message}` }
-    }
-  }
-
-  // napcat 相关命令
-  async napcatStart(qq) {
-    return this.executeCommand(`napcat start ${qq}`)
-  }
-
-  async napcatStop(qq = '') {
-    return this.executeCommand(`napcat stop ${qq}`)
-  }
-
-  async napcatRestart(qq) {
-    return this.executeCommand(`napcat restart ${qq}`)
-  }
-
-  async napcatStatus(qq = '') {
-    return this.executeCommand(`napcat status ${qq}`)
-  }
-
-  async napcatLog(qq) {
-    return this.executeCommand(`napcat log ${qq}`)
-  }
-
-  async napcatStartup(qq) {
-    return this.executeCommand(`napcat startup ${qq}`)
-  }
-
-  async napcatStartdown(qq) {
-    return this.executeCommand(`napcat startdown ${qq}`)
-  }
-
-  async napcatUpdate() {
-    return this.executeCommand('napcat update')
-  }
-
-  async napcatRebuild() {
-    return this.executeCommand('napcat rebuild')
-  }
-
-  async napcatRemove() {
-    return this.executeCommand('napcat remove')
-  }
-
-  async napcatHelp() {
-    return this.executeCommand('napcat help')
-  }
-
-  async napcatOldHelp() {
-    return this.executeCommand('napcat oldhelp')
-  }
-
-  // 添加一个新方法用于获取实时日志的一部分
-  async getPartialLog(qq, timeout = 5000) {
-    if (!this.connected) {
-      const connected = await this.connect()
-      if (!connected) {
-        return { success: false, message: 'SSH 连接失败' }
-      }
-    }
-
-    try {
-      // 创建一个可以取消的命令执行
-      const controller = new AbortController();
-      const { signal } = controller;
+      this.client.on('error', (err) => {
+        console.error('SSH 连接错误:', err)
+        this.isConnected = false
+        resolve(false)
+      })
       
-      // 设置超时，在指定时间后取消命令执行
-      const timeoutId = setTimeout(() => {
-        controller.abort();
-      }, timeout);
+      this.client.on('end', () => {
+        console.log('SSH 连接已关闭')
+        this.isConnected = false
+      })
       
-      // 执行命令，但不等待它完成
-      const commandPromise = this.ssh.execCommand(`napcat log ${qq}`, { signal });
-      
-      // 等待一段时间后取消命令
-      await new Promise(resolve => setTimeout(resolve, timeout));
-      
-      // 清除超时定时器
-      clearTimeout(timeoutId);
-      
-      // 尝试取消命令执行
-      try {
-        controller.abort();
-      } catch (abortError) {
-        console.log('取消命令执行:', abortError);
+      // 准备连接配置
+      const connectConfig = {
+        host: this.config.host,
+        port: this.config.port,
+        username: this.config.username,
+        readyTimeout: 10000 // 10秒超时
       }
       
-      // 获取已经收集到的输出
-      const result = await commandPromise.catch(error => {
-        // 如果是因为我们取消了命令而失败，这是预期的
-        if (error.name === 'AbortError') {
-          return { stdout: '命令已取消，以下是部分日志：\n', stderr: '', code: 0 };
+      // 根据配置选择认证方式
+      if (this.config.privateKey) {
+        connectConfig.privateKey = this.config.privateKey
+        if (this.config.passphrase) {
+          connectConfig.passphrase = this.config.passphrase
         }
-        throw error;
-      });
+      } else {
+        connectConfig.password = this.config.password
+      }
       
-      return {
-        success: true,
-        stdout: result.stdout || '没有日志输出',
-        stderr: result.stderr,
-        code: result.code,
-        partial: true
-      };
-    } catch (error) {
-      console.error('获取部分日志失败:', error);
-      return { 
-        success: false, 
-        message: `获取部分日志失败: ${error.message}` 
-      };
+      // 连接到服务器
+      this.client.connect(connectConfig)
+    })
+  }
+  
+  // 断开 SSH 连接
+  async disconnect() {
+    if (!this.isConnected || !this.client) {
+      return true
     }
+    
+    return new Promise((resolve) => {
+      this.client.end()
+      this.isConnected = false
+      resolve(true)
+    })
+  }
+  
+  // 执行 SSH 命令
+  async executeCommand(command) {
+    if (!this.isConnected) {
+      const connected = await this.connect()
+      if (!connected) {
+        return {
+          success: false,
+          message: 'SSH 连接失败'
+        }
+      }
+    }
+    
+    return new Promise((resolve) => {
+      this.client.exec(command, (err, stream) => {
+        if (err) {
+          resolve({
+            success: false,
+            message: `执行命令失败: ${err.message}`,
+            error: err
+          })
+          return
+        }
+        
+        let stdout = ''
+        let stderr = ''
+        
+        stream.on('data', (data) => {
+          stdout += data.toString()
+        })
+        
+        stream.stderr.on('data', (data) => {
+          stderr += data.toString()
+        })
+        
+        stream.on('close', (code) => {
+          resolve({
+            success: code === 0,
+            stdout,
+            stderr,
+            code
+          })
+        })
+      })
+    })
+  }
+  
+  // 获取部分日志（带超时）
+  async getPartialLog(qq, timeoutMs = 5000) {
+    if (!this.isConnected) {
+      const connected = await this.connect()
+      if (!connected) {
+        return {
+          success: false,
+          message: 'SSH 连接失败'
+        }
+      }
+    }
+    
+    return new Promise((resolve) => {
+      const command = `napcat log ${qq}`
+      
+      this.client.exec(command, (err, stream) => {
+        if (err) {
+          resolve({
+            success: false,
+            message: `执行命令失败: ${err.message}`,
+            error: err
+          })
+          return
+        }
+        
+        let stdout = ''
+        let stderr = ''
+        let timer = null
+        
+        // 设置超时
+        timer = setTimeout(() => {
+          // 发送 Ctrl+C 信号中断命令
+          stream.write('\x03')
+          
+          // 等待一小段时间让命令完全终止
+          setTimeout(() => {
+            resolve({
+              success: true,
+              stdout: stdout || '命令已取消，以下是部分日志：',
+              stderr,
+              timedOut: true
+            })
+          }, 500)
+        }, timeoutMs)
+        
+        stream.on('data', (data) => {
+          stdout += data.toString()
+        })
+        
+        stream.stderr.on('data', (data) => {
+          stderr += data.toString()
+        })
+        
+        stream.on('close', (code) => {
+          if (timer) {
+            clearTimeout(timer)
+          }
+          
+          resolve({
+            success: true, // 即使命令被中断，我们也认为它成功了
+            stdout,
+            stderr,
+            code
+          })
+        })
+      })
+    })
+  }
+  
+  // 获取实时日志流
+  getLogStream(qq, callback, errorCallback, endCallback) {
+    if (!this.isConnected) {
+      this.connect().then(connected => {
+        if (!connected) {
+          if (errorCallback) errorCallback('SSH 连接失败')
+          return
+        }
+        this._createLogStream(qq, callback, errorCallback, endCallback)
+      })
+    } else {
+      this._createLogStream(qq, callback, errorCallback, endCallback)
+    }
+  }
+  
+  // 创建日志流
+  _createLogStream(qq, callback, errorCallback, endCallback) {
+    const command = `napcat log ${qq}`
+    
+    this.client.exec(command, (err, stream) => {
+      if (err) {
+        if (errorCallback) errorCallback(`执行命令失败: ${err.message}`)
+        return
+      }
+      
+      // 存储流的引用，以便稍后可以关闭它
+      this.currentLogStream = stream
+      
+      stream.on('data', (data) => {
+        const logData = data.toString()
+        if (callback) callback(logData)
+      })
+      
+      stream.stderr.on('data', (data) => {
+        const errorData = data.toString()
+        if (errorCallback) errorCallback(errorData)
+      })
+      
+      stream.on('close', (code) => {
+        this.currentLogStream = null
+        if (endCallback) endCallback(code)
+      })
+    })
+  }
+  
+  // 停止日志流
+  stopLogStream() {
+    if (this.currentLogStream) {
+      // 发送 Ctrl+C 信号中断命令
+      this.currentLogStream.write('\x03')
+      return true
+    }
+    return false
+  }
+  
+  // 查看 napcat 状态
+  async napcatStatus(qq = '') {
+    const command = qq ? `napcat status ${qq}` : 'napcat status'
+    return this.executeCommand(command)
+  }
+  
+  // 启动 napcat
+  async napcatStart(qq) {
+    if (!qq) {
+      return {
+        success: false,
+        message: '请指定要启动的 QQ 号'
+      }
+    }
+    
+    const command = `napcat start ${qq}`
+    return this.executeCommand(command)
+  }
+  
+  // 停止 napcat
+  async napcatStop(qq = '') {
+    const command = qq ? `napcat stop ${qq}` : 'napcat stop'
+    return this.executeCommand(command)
+  }
+  
+  // 重启 napcat
+  async napcatRestart(qq) {
+    if (!qq) {
+      return {
+        success: false,
+        message: '请指定要重启的 QQ 号'
+      }
+    }
+    
+    const command = `napcat restart ${qq}`
+    return this.executeCommand(command)
+  }
+  
+  // 更新 napcat
+  async napcatUpdate() {
+    const command = 'napcat update'
+    return this.executeCommand(command)
+  }
+  
+  // 获取 napcat 帮助
+  async napcatHelp() {
+    const command = 'napcat help'
+    return this.executeCommand(command)
   }
 }
 
-// 导出单例
-export default new SSHClient()
+// 创建单例实例
+const sshClient = new SSHClient()
+export default sshClient

@@ -30,19 +30,14 @@ export const plugin = {
   rule: []
 }
 
-// 导出所有的插件类
-export * from './apps/test.js'
-export * from './apps/bind.js'
-
-// 获取 apps 目录下所有的 JS 文件并加载它们
+// 获取 apps 目录下所有的 JS 文件
 const appsDir = path.join(__dirname, 'apps')
 const appFiles = fs.readdirSync(appsDir).filter(file => file.endsWith('.js'))
 
-// 加载所有插件（不使用动态 export）
+// 记录加载的插件
 for (const file of appFiles) {
   const appName = path.basename(file, '.js')
   logger.mark(logger.green(`[napcat-plugin] 加载插件: ${appName}`))
-  // 注意：这里不再使用 export * from，而是在上面静态导出
 }
 
 // 显示启动信息
@@ -59,3 +54,15 @@ function showStartupInfo(loadTime) {
 const endTime = process.hrtime(startTime)
 const loadTime = (endTime[0] * 1000 + endTime[1] / 1000000).toFixed(2)
 showStartupInfo(loadTime)
+
+// 使用静态导入替代动态导入
+// 由于 ES 模块不支持动态导出，我们需要使用静态导入
+// 这意味着我们需要手动列出所有插件
+
+// 导出所有插件
+export * from './apps/test.js'
+export * from './apps/bind.js'
+export * from './apps/debug.js'
+
+// 如果将来添加了新插件，需要在这里手动添加新的导出语句
+// 例如: export * from './apps/new-plugin.js'
