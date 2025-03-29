@@ -1,53 +1,78 @@
 import plugin from '../../../lib/plugins/plugin.js'
 import sshClient from '../components/ssh.js'
+import { segment } from 'oicq'
 
 // 继承 YunzaiBot 的插件类
-export class NapcatTest extends plugin {
+export class NapcatManager extends plugin {
   constructor() {
     super({
-      name: 'napcat-测试',
-      dsc: '测试 napcat 命令',
+      name: 'napcat-管理',
+      dsc: '管理 napcat 服务',
       event: 'message',
       priority: 5000,
       rule: [
         {
           reg: '^#napcat测试$',
-          fnc: 'testSSHConnection'
+          fnc: 'testSSHConnection',
+          permission: 'master'  // 只允许主人使用
         },
         {
           reg: '^#napcat状态(\\s+\\d+)?$',
-          fnc: 'napcatStatus'
+          fnc: 'napcatStatus',
+          permission: 'master'  // 只允许主人使用
         },
         {
           reg: '^#napcat启动\\s+(\\d+)$',
-          fnc: 'napcatStart'
+          fnc: 'napcatStart',
+          permission: 'master'  // 只允许主人使用
         },
         {
           reg: '^#napcat停止(\\s+\\d+)?$',
-          fnc: 'napcatStop'
+          fnc: 'napcatStop',
+          permission: 'master'  // 只允许主人使用
         },
         {
           reg: '^#napcat重启\\s+(\\d+)$',
-          fnc: 'napcatRestart'
+          fnc: 'napcatRestart',
+          permission: 'master'  // 只允许主人使用
         },
         {
           reg: '^#napcat日志\\s+(\\d+)$',
-          fnc: 'napcatLog'
+          fnc: 'napcatLog',
+          permission: 'master'  // 只允许主人使用
         },
         {
           reg: '^#napcat更新$',
-          fnc: 'napcatUpdate'
+          fnc: 'napcatUpdate',
+          permission: 'master'  // 只允许主人使用
         },
         {
           reg: '^#napcat帮助$',
-          fnc: 'napcatHelp'
+          fnc: 'napcatHelp',
+          permission: 'master'  // 只允许主人使用
         }
       ]
     })
   }
 
+  // 检查是否为主人
+  async checkMaster(e) {
+    if (!e.isMaster) {
+      // 使用 segment.at 艾特用户
+      await e.reply([
+        segment.at(e.user_id),
+        ' 抱歉，只有主人才能使用 napcat 管理功能'
+      ])
+      return false
+    }
+    return true
+  }
+
   // 测试 SSH 连接
   async testSSHConnection(e) {
+    // 检查权限
+    if (!await this.checkMaster(e)) return true
+    
     e.reply('正在测试 SSH 连接...')
     
     try {
@@ -78,6 +103,9 @@ export class NapcatTest extends plugin {
 
   // 查看 napcat 状态
   async napcatStatus(e) {
+    // 检查权限
+    if (!await this.checkMaster(e)) return true
+    
     const match = e.msg.match(/^#napcat状态\s*(\d+)?$/)
     const qq = match && match[1] ? match[1].trim() : ''
     
@@ -102,6 +130,9 @@ export class NapcatTest extends plugin {
 
   // 启动 napcat
   async napcatStart(e) {
+    // 检查权限
+    if (!await this.checkMaster(e)) return true
+    
     const match = e.msg.match(/^#napcat启动\s+(\d+)$/)
     if (!match || !match[1]) {
       e.reply('请指定要启动的 QQ 号，例如: #napcat启动 123456789')
@@ -128,6 +159,9 @@ export class NapcatTest extends plugin {
 
   // 停止 napcat
   async napcatStop(e) {
+    // 检查权限
+    if (!await this.checkMaster(e)) return true
+    
     const match = e.msg.match(/^#napcat停止\s*(\d+)?$/)
     const qq = match && match[1] ? match[1].trim() : ''
     
@@ -150,6 +184,9 @@ export class NapcatTest extends plugin {
 
   // 重启 napcat
   async napcatRestart(e) {
+    // 检查权限
+    if (!await this.checkMaster(e)) return true
+    
     const match = e.msg.match(/^#napcat重启\s+(\d+)$/)
     if (!match || !match[1]) {
       e.reply('请指定要重启的 QQ 号，例如: #napcat重启 123456789')
@@ -176,6 +213,9 @@ export class NapcatTest extends plugin {
 
   // 查看 napcat 日志（使用实时日志流）
   async napcatLog(e) {
+    // 检查权限
+    if (!await this.checkMaster(e)) return true
+    
     const match = e.msg.match(/^#napcat日志\s+(\d+)$/)
     if (!match || !match[1]) {
       e.reply('请指定要查看日志的 QQ 号，例如: #napcat日志 123456789')
@@ -331,6 +371,9 @@ export class NapcatTest extends plugin {
 
   // 更新 napcat
   async napcatUpdate(e) {
+    // 检查权限
+    if (!await this.checkMaster(e)) return true
+    
     e.reply('正在更新 napcat...')
     
     try {
@@ -350,6 +393,9 @@ export class NapcatTest extends plugin {
 
   // 获取 napcat 帮助
   async napcatHelp(e) {
+    // 检查权限
+    if (!await this.checkMaster(e)) return true
+    
     e.reply('正在获取 napcat 帮助信息...')
     
     try {

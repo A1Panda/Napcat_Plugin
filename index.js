@@ -59,10 +59,10 @@ showStartupInfo(loadTime)
 // 由于 ES 模块不支持动态导出，我们需要使用静态导入
 // 这意味着我们需要手动列出所有插件
 
-// 导出所有插件
-export * from './apps/test.js'
-export * from './apps/bind.js'
-export * from './apps/debug.js'
+// 导出所有插件（开放）
+export * from './apps/napcatmanager.js'
+//export * from './apps/bind.js'
+//export * from './apps/debug.js'
 
 // 如果将来添加了新插件，需要在这里手动添加新的导出语句
 // 例如: export * from './apps/new-plugin.js'
