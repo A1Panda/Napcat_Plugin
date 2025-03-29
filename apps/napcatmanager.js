@@ -339,33 +339,6 @@ export class NapcatManager extends plugin {
         }
       )
       
-      // 注册用户取消命令
-      this.setContext('napcatLog', {
-        qq,
-        timeout: 60000, // 60秒后自动取消
-        cancelCmd: '#取消日志',
-        callback: async () => {
-          if (!stopped) {
-            clearTimeout(timeoutTimer)
-            await cleanup()
-            
-            // 如果用户取消，发送已收集的日志
-            if (fullLogBuffer.length > 0) {
-              // 处理日志，将其格式化为聊天记录形式
-              const logEntries = this.formatLogsAsChatRecords(fullLogBuffer.join(''), qq)
-              
-              // 发送格式化后的日志
-              await e.reply(`QQ ${qq} 的 napcat 日志（手动取消，已收集 ${Math.floor((Date.now() - startTime) / 1000)} 秒）：`)
-              
-              // 使用聊天记录格式发送
-              await this.sendLogAsForwardMsg(e, logEntries, qq)
-            } else {
-              await e.reply(`已手动取消 QQ ${qq} 的日志查看，未收集到任何日志`)
-            }
-          }
-        }
-      })
-      
     } catch (error) {
       // 确保出错时也断开连接
       try {
