@@ -161,7 +161,7 @@ Napcat 管理插件是一个基于 Yunzai-Bot 的扩展，提供了通过 QQ 机
 
 ## 📝 更新日志
 
-### v1.0.0 (2023-10-01)
+### v1.0.0 (2025-03-30)
 - 初始版本发布
 - 支持基本的 Napcat 管理功能
 - 实现日志查看功能
@@ -176,4 +176,4 @@ Napcat 管理插件是一个基于 Yunzai-Bot 的扩展，提供了通过 QQ 机
 
 ## 📜 许可证
 
-[MIT License](LICENSE) © 2023 Your Name 
+[MIT License](LICENSE) © 2025 A1Panda
