@@ -16,7 +16,6 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "node-ssh": "^13.1.0",
     "ssh2": "^1.16.0"
   }
 } 

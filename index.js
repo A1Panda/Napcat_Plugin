@@ -61,6 +61,7 @@ showStartupInfo(loadTime)
 
 // 导出所有插件（开放）
 export * from './apps/napcatmanager.js'
+export * from './apps/qqlogin.js'
 //export * from './apps/bind.js'
 //export * from './apps/debug.js'
 

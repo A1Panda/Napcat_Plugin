@@ -14,9 +14,59 @@ class SSHClient {
     this.config = null
     this.isConnected = false
     this.connectionInfo = {}
+    this.currentLogStream = null
+    this.sftp = null
     
     // 加载配置
     this.loadConfig()
+  }
+  
+  // 创建默认配置文件
+  createDefaultConfig() {
+    try {
+      const configDir = path.join(pluginRoot, 'config')
+      const configPath = path.join(configDir, 'ssh_config.json')
+      
+      // 确保配置目录存在
+      if (!fs.existsSync(configDir)) {
+        fs.mkdirSync(configDir, { recursive: true })
+      }
+      
+      // 默认配置内容
+      const defaultConfig = {
+        host: 'localhost',
+        port: 22,
+        username: 'root',
+        password: '',
+        // 如果需要使用私钥认证，取消下面的注释并设置私钥路径
+        // privateKeyPath: 'config/id_rsa',
+        // passphrase: '',  // 如果私钥有密码，请设置
+        
+        // 连接超时设置（毫秒）
+        connectTimeout: 10000,
+        
+        // 其他设置
+        keepaliveInterval: 60000  // 心跳包间隔（毫秒）
+      }
+      
+      // 写入配置文件
+      fs.writeFileSync(
+        configPath, 
+        JSON.stringify(defaultConfig, null, 2), 
+        'utf8'
+      )
+      
+      console.log(`已创建默认 SSH 配置文件: ${configPath}`)
+      return defaultConfig
+    } catch (error) {
+      console.error('创建默认配置文件失败:', error)
+      return {
+        host: 'localhost',
+        port: 22,
+        username: 'root',
+        password: ''
+      }
+    }
   }
   
   // 加载 SSH 配置
@@ -37,22 +87,13 @@ class SSHClient {
           }
         }
       } else {
-        console.error('SSH 配置文件不存在，请创建 config/ssh_config.json')
-        this.config = {
-          host: 'localhost',
-          port: 22,
-          username: 'root',
-          password: ''
-        }
+        console.log('SSH 配置文件不存在，将创建默认配置文件')
+        this.config = this.createDefaultConfig()
       }
     } catch (error) {
       console.error('加载 SSH 配置失败:', error)
-      this.config = {
-        host: 'localhost',
-        port: 22,
-        username: 'root',
-        password: ''
-      }
+      console.log('将使用默认配置')
+      this.config = this.createDefaultConfig()
     }
   }
   
@@ -347,6 +388,152 @@ class SSHClient {
   async napcatHelp() {
     const command = 'napcat help'
     return this.executeCommand(command)
+  }
+  
+  // 获取 SFTP 连接
+  async getSFTP() {
+    if (!this.isConnected) {
+      const connected = await this.connect()
+      if (!connected) {
+        throw new Error('SSH 连接失败，无法创建 SFTP 连接')
+      }
+    }
+    
+    if (this.sftp) {
+      return this.sftp
+    }
+    
+    return new Promise((resolve, reject) => {
+      this.client.sftp((err, sftp) => {
+        if (err) {
+          reject(new Error(`创建 SFTP 连接失败: ${err.message}`))
+          return
+        }
+        
+        this.sftp = sftp
+        resolve(this.sftp)
+      })
+    })
+  }
+  
+  // 下载文件
+  async downloadFile(remotePath, localPath) {
+    try {
+      const sftp = await this.getSFTP()
+      
+      return new Promise((resolve, reject) => {
+        const readStream = sftp.createReadStream(remotePath)
+        const writeStream = fs.createWriteStream(localPath)
+        
+        readStream.on('error', (err) => {
+          reject(new Error(`读取远程文件失败: ${err.message}`))
+        })
+        
+        writeStream.on('error', (err) => {
+          reject(new Error(`写入本地文件失败: ${err.message}`))
+        })
+        
+        writeStream.on('finish', () => {
+          resolve({
+            success: true,
+            message: '文件下载成功',
+            localPath
+          })
+        })
+        
+        readStream.pipe(writeStream)
+      })
+    } catch (error) {
+      return {
+        success: false,
+        message: `文件下载失败: ${error.message}`,
+        error
+      }
+    }
+  }
+  
+  // 上传文件
+  async uploadFile(localPath, remotePath) {
+    try {
+      const sftp = await this.getSFTP()
+      
+      return new Promise((resolve, reject) => {
+        const readStream = fs.createReadStream(localPath)
+        const writeStream = sftp.createWriteStream(remotePath)
+        
+        readStream.on('error', (err) => {
+          reject(new Error(`读取本地文件失败: ${err.message}`))
+        })
+        
+        writeStream.on('error', (err) => {
+          reject(new Error(`写入远程文件失败: ${err.message}`))
+        })
+        
+        writeStream.on('close', () => {
+          resolve({
+            success: true,
+            message: '文件上传成功',
+            remotePath
+          })
+        })
+        
+        readStream.pipe(writeStream)
+      })
+    } catch (error) {
+      return {
+        success: false,
+        message: `文件上传失败: ${error.message}`,
+        error
+      }
+    }
+  }
+  
+  // 检查文件是否存在
+  async fileExists(remotePath) {
+    try {
+      const sftp = await this.getSFTP()
+      
+      return new Promise((resolve) => {
+        sftp.stat(remotePath, (err) => {
+          if (err) {
+            resolve(false)
+          } else {
+            resolve(true)
+          }
+        })
+      })
+    } catch (error) {
+      console.error('检查文件存在性失败:', error)
+      return false
+    }
+  }
+  
+  // 获取 QQ 登录二维码
+  async getQQQRCode(qq, localSavePath) {
+    const remotePath = '/opt/QQ/resources/app/app_launcher/napcat/cache/qrcode.png'
+    
+    // 检查远程文件是否存在
+    const exists = await this.fileExists(remotePath)
+    if (!exists) {
+      return {
+        success: false,
+        message: '远程二维码文件不存在，请确认路径是否正确或 QQ 是否已生成二维码'
+      }
+    }
+    
+    // 如果没有指定保存路径，则使用默认路径
+    if (!localSavePath) {
+      localSavePath = path.join(pluginRoot, 'data', `qrcode_${qq}.png`)
+    }
+    
+    // 确保目标目录存在
+    const dir = path.dirname(localSavePath)
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true })
+    }
+    
+    // 下载文件
+    return this.downloadFile(remotePath, localSavePath)
   }
 }
 
